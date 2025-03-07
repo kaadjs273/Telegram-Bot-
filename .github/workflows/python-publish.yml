@@ -1,0 +1,214 @@
+# This workflow will upload a Python Package to PyPI when a release is created
+import json
+import random
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, Filters
+
+TOKEN = "7660338962:AAHxegOTNOpZSvmgedaCSKEiR-_NgW2pgS01"
+DB_FILE = "users.json"
+
+def load_db():
+    try:
+        with open(DB_FILE, "r") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return []
+
+def save_db(db):
+    with open(DB_FILE, "w") as file:
+        json.dump(db, file, indent=4)
+
+def get_user(user_id, username=None):
+    db = load_db()
+    for user in db:
+        if user["user_id"] == user_id:
+            if username:
+                user["username"] = username
+                save_db(db)
+            return user
+    new_user = {"user_id": user_id, "username": username, "signals_used": 0, "is_premium": False}
+    db.append(new_user)
+    save_db(db)
+    return new_user
+
+def update_user(user):
+    db = load_db()
+    for i, u in enumerate(db):
+        if u["user_id"] == user["user_id"]:
+            db[i] = user
+            break
+    save_db(db)
+
+def start(update: Update, context: CallbackContext):
+    username = f"@{update.effective_user.username}"
+    user = get_user(update.effective_user.id, username)
+    trial_left = max(0, 3 - user["signals_used"])
+    text = f"🤖 Welcome to Jarix AI Signal Bot!\nTrial Status: ACTIVE ({trial_left} signals left)\nPremium: Contact @jarixtrader for upgrade."
+    keyboard = [[InlineKeyboardButton("💹 Choose a Currency Pair", callback_data="select_pair")]]
+    update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+pairs = ["EUR/USD", "USD/JPY", "GBP/USD", "USD/CHF", "AUD/USD"]
+
+def button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user = get_user(query.from_user.id)
+
+    if query.data == "select_pair":
+        keyboard = [[InlineKeyboardButton(pair, callback_data=f"pair_{pair}")] for pair in pairs]
+        query.edit_message_text("Select a currency pair:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("pair_"):
+        pair = query.data.split("_", 1)[1]
+        context.user_data["pair"] = pair
+        times = ["5 Seconds", "15 Seconds", "30 Seconds", "1 Minute", "5 Minutes"]
+        keyboard = [[InlineKeyboardButton(time, callback_data=f"time_{time}")] for time in times]
+        query.edit_message_text(f"Selected Pair: {pair}\nNow choose expiration time:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("time_"):
+        time = query.data.split("_", 1)[1]
+        context.user_data["time"] = time
+        send_signal(query, context, user)
+
+def send_signal(query, context, user):
+    if user["is_premium"]:
+        signal = generate_signal()
+        query.edit_message_text(signal)
+    else:
+        if user["signals_used"] >= 3:
+            query.edit_message_text("⚠️ Trial expired. Buy Premium from @jarixtrader.")
+        else:
+            high_quality_signal = get_high_quality_signal(context)
+            if high_quality_signal:
+                query.edit_message_text(high_quality_signal)
+                user["signals_used"] += 1
+                update_user(user)
+            else:
+                query.edit_message_text("⚠️ No strong signal now. Please wait!")
+
+def get_high_quality_signal(context):
+    analysis = {
+        "accuracy": random.randint(85, 100),
+        "trend_strength": random.choice(["Weak", "Strong"]),
+        "volatility": random.choice(["Low", "High", "Stable"]),
+        "news_impact": random.choice(["Positive", "Neutral", "Negative"]),
+    }
+    if (analysis["accuracy"] >= 90 and
+        analysis["trend_strength"] == "Strong" and
+        analysis["volatility"] in ["High", "Stable"] and
+        analysis["news_impact"] != "Negative"):
+        
+        return (f"📢 Jarix AI Signal:\n"
+                f"💹 Pair: {context.user_data.get('pair')}\n"
+                f"🕐 Time: {context.user_data.get('time')}\n"
+                f"📰 News: {analysis['news_impact']}\n"
+                f"📊 Volatility: {analysis['volatility']}\n"
+                f"📈 Trend: Uptrend\n"
+                f"Recommendation: ⬆ UP")
+    else:
+        return None
+
+def generate_signal():
+    return (f"📢 Jarix AI Signal:\n"
+            f"💹 Pair: Random Pair\n"
+            f"🕐 Time: Random Time\n"
+            f"📰 News: Positive\n"
+            f"📊 Volatility: Increasing\n"
+            f"📈 Trend: Uptrend\n"
+            f"Recommendation: ⬆ UP")
+
+def set_premium(update: Update, context: CallbackContext):
+    if not context.args:
+        update.message.reply_text("❌ Username do. Example: /premium @username")
+        return
+    
+    username = context.args[0]
+    db = load_db()
+    for user in db:
+        if user.get("username") == username:
+            user["is_premium"] = True
+            save_db(db)
+            update.message.reply_text(f"✅ {username} ko Premium de diya gaya.")
+            return
+    update.message.reply_text("❌ User nahi mila.")
+
+def main():
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(CommandHandler("premium", set_premium))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main() For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+name: Upload Python Package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  release-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build release distributions
+        run: |
+          # NOTE: put your own distribution build steps here.
+          python -m pip install build
+          python -m build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+  pypi-publish:
+    runs-on: ubuntu-latest
+    needs:
+      - release-build
+    permissions:
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
+
+    # Dedicated environments with protections for publishing are strongly recommended.
+    # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
+    environment:
+      name: pypi
+      # OPTIONAL: uncomment and update to include your PyPI project URL in the deployment status:
+      # url: https://pypi.org/p/YOURPROJECT
+      #
+      # ALTERNATIVE: if your GitHub Release name is the PyPI project version string
+      # ALTERNATIVE: exactly, uncomment the following line instead:
+      # url: https://pypi.org/project/YOURPROJECT/${{ github.event.release.name }}
+
+    steps:
+      - name: Retrieve release distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Publish release distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
